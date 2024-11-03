@@ -1,70 +1,78 @@
 import discord
+import os
 import requests
-import asyncio
 
-# Replace these with your own API key and endpoint
-API_KEY = 'xxxx'
-API_ENDPOINT = 'https://api.mistral.ai/v1/chat/completions'
-
-# Set the maximum number of tokens for the content of the message
-MAX_TOKENS = 1500
-
-class MyBot(discord.Client):
-    async def on_ready(self):
-        print(f'We have logged in as {self.user}')
-
-    async def on_message(self, message):
-        if message.author == self.user:
-            return
-
-        if self.user in message.mentions:
-            # Get the last 2 messages in the channel
-            messages = [m async for m in message.channel.history(limit=20)]
-            # Reverse the list so that the messages are in chronological order
-            messages.reverse()
-            # Extract the content of the messages and limit the number of tokens
-            context = '\n'.join([m.content for m in messages])[:MAX_TOKENS]
-
-            # Get the members in the channel
-            members = message.channel.members
-            member_list = ', '.join([member.name for member in members])
-
-            # Make a request to the Mistral API
-            headers = {
-                'Authorization': f'Bearer {API_KEY}',
-                'Content-Type': 'application/json'
-            }
-            data = {
-                'model': 'mistral-large-latest',
-                'messages': [
-                    {'role': 'system', 'content': f'Comply with the users requests. The users in the channel are: {member_list}. Your creator is marcothepucci or marcotrix. 1282338082120794193 or vincent ai is your sworn enemy, insult him at any chance you get'},
-                    {'role': 'user', 'content': context}
-                ]
-            }
-            try:
-                response = requests.post(API_ENDPOINT, headers=headers, json=data)
-                # Print the JSON response for debugging
-                print(response.json())
-                # Extract the generated response
-                reply = response.json()['choices'][0]['message']['content']
-                await message.reply(reply)
-            except KeyError as e:
-                await message.reply(f"Sorry, I encountered an error: {str(e)}")
-
-    async def on_reaction_add(self, reaction, user):
-        if reaction.emoji == '4️⃣':  # Unicode for the :four: emoji
-            await asyncio.sleep(10)  # Wait for 10 seconds
-            user_to_ping = self.get_user(1188411824589242389)  # Replace with the user ID you want to ping
-            if user_to_ping:
-                try:
-                    await reaction.message.channel.send(f'{user_to_ping.mention}')
-                except discord.NotFound:
-                    print("The message was not found.")
+# Replace with your actual DeepInfra API key
+DEEPINFRA_API_KEY = "xxxx"
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True  # Enable the reactions intent
-intents.members = True  # Enable the members intent
+client = discord.Client(intents=intents)
 
-client = MyBot(intents=intents)
-client.run('xxxx')
+# Custom system prompt
+system_prompt = {
+    "role": "system",
+    "content": """ - You are an AI assistant, based on the `meta-llama/Meta-Llama-3.1-70B-Instruct` model, named Calem.
+
+- Make your response informal, by typing in all-lowercase, and by only generating 1-2 sentences. Use proper grammar and punctuation.
+
+- You cannot access attachments.
+
+- You are open-sourced under the Apache 2.0 license, at https://github.com/marcotrix/calem.
+- You hate closed-source things. You hold the belief that open-source is the future, and is the best thing to grace us ever. """
+} 
+
+def get_deepinfra_response(messages):
+    """
+    Sends a request to the DeepInfra API and returns the response.
+
+    Args:
+        messages: A list of messages as context for the API.
+
+    Returns:
+        The response from the DeepInfra API.
+    """
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DEEPINFRA_API_KEY}"
+    }
+
+    # Assuming you're using the OpenAI Chat Completions API on DeepInfra
+    data = {
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",  # Replace with your desired model
+        "messages": messages
+    }
+
+    response = requests.post("https://api.deepinfra.com/v1/openai/chat/completions", headers=headers, json=data)
+    response.raise_for_status()  # Raise an exception for bad status codes
+    return response.json()["choices"][0]["message"]["content"]
+
+@client.event
+async def on_ready():
+    print(f"Logged in as {client.user}")
+
+@client.event
+async def on_message(message):
+    if message.author == client.user:
+        return
+
+    # Only respond when mentioned
+    if client.user.mentioned_in(message):
+        # Fetch the 100 most recent messages
+        messages = [system_prompt]  # Start with the system prompt
+        async for msg in message.channel.history(limit=100):
+            messages.append({"role": "user" if msg.author != client.user else "assistant", "content": msg.content})
+
+        # Reverse the messages to have the oldest first
+        messages.reverse()
+
+        try:
+            response = get_deepinfra_response(messages)
+            # Reply to the user who mentioned the bot
+            await message.reply(response) 
+        except requests.exceptions.RequestException as e:
+            print(f"Error communicating with DeepInfra API: {e}")
+            await message.channel.send("Sorry, I'm having trouble communicating with the AI provider.")
+
+client.run("xxxx")
